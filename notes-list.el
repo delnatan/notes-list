@@ -4,7 +4,7 @@
 
 ;; Maintainer: Nicolas P. Rougier <Nicolas.Rougier@inria.fr>
 ;; URL: https://github.com/rougier/notes-list
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: convenience
 
@@ -25,29 +25,29 @@
 
 ;;; Commentary:
 
-;; Notes list collects notes in user-defined directories and populate a buffer with a two-lines summary for each note. To do so, notes are parsed such as to extract title, icon, date, summary and tags. A typical org note header is thus
+;; Notes list collects notes in user-defined directories and populates a buffer
+;; with a two-line summary for each note. Notes are parsed to extract title,
+;; date, summary and tags. A typical org note header is:
 ;;
 ;;  #+TITLE:    Emacs hacking
 ;;  #+DATE:     2023-03-17
 ;;  #+FILETAGS: HACK EMACS CODE
 ;;  #+SUMMARY:  Notes about emacs hacking ideas
-;;  #+ICON:     bootstrap/journal-code
 ;;
-;; Icon are built using the svg-lib library and syntax is
-;; "collection/name" where collection is one one "simple",
-;; "bootstrap", "material" or "octicons". For available icons, please
-;; refere to the svg-lib documentation.
+;; Notes in subdirectories are collected recursively. The subdirectory name
+;; acts as a category alongside FILETAGS. Press 'c' to browse by category,
+;; '/' to filter by text, ESC to clear filters.
 
 ;;; News
+;;
+;;  Version 0.2.0
+;;  Remove svg-lib/stripes dependencies; add search, category browsing,
+;;  subdirectory-aware collection, plain-text tags.
 ;;
 ;;  Version 0.1.0
 ;;  Initial version
 ;;
 ;;; Code:
-(require 'stripes)
-(require 'svg-lib)
-;; removed svg icons
-;; (require 'svg-tag-mode)
 (require 'cl-lib)
 
 (defgroup notes-list nil
@@ -80,38 +80,33 @@
                  (const :tag "Modification time" modification))
   :group 'notes-list)
 
-(defcustom notes-list-display-icons t
-  "Display icon on (left)"
-  :type 'boolean
-  :group 'notes-list)
-
 (defcustom notes-list-display-tags t
-  "Display tags (top right)"
+  "Display tags (bottom right)"
   :type 'boolean
   :group 'notes-list)
 
 (defcustom notes-list-display-date t
-  "Display date (bottom right)"
+  "Display date (top right)"
   :type 'boolean
   :group 'notes-list)
 
 (defface notes-list-face-title
-  '((t (:inherit (nano-salient nano-strong))))
+  '((t (:inherit bold)))
   "Face for notes title"
   :group 'notes-list)
 
 (defface notes-list-face-tags
-  '((t (:inherit nano-salient)))
+  '((t (:inherit font-lock-constant-face)))
   "Face for notes tags"
   :group 'notes-list)
 
 (defface notes-list-face-summary
-  '((t (:inherit nano-default)))
+  '((t (:inherit default)))
   "Face for notes summary"
   :group 'notes-list)
 
 (defface notes-list-face-time
-  '((t (:inherit nano-faded)))
+  '((t (:inherit shadow)))
   "Face for notes time"
   :group 'notes-list)
 
@@ -120,11 +115,14 @@
   "Face to use for alternating note style in list.")
 
 (defface notes-list-face-highlight
-  `((t (:inherit nano-subtle)))
+  `((t (:inherit region)))
   "Face to use for selected note style in list.")
 
-(defvar notes-list--icons nil
-  "Icons cache")
+(defvar notes-list--filter nil
+  "Current text filter string, or nil for no filter.")
+
+(defvar notes-list--category nil
+  "Current category filter string, or nil for all categories.")
 
 (defvar notes-list-collect-notes-function #'notes-list-collect-org-notes
   "Function to used to build list of notes to display. Customize
@@ -136,77 +134,11 @@ to your favourite notes solution.")
 `notes-list-collect-notes-function' to adapt notes-list to your
 favourite notes solution.")
 
-(defun notes-list--make-icon (icon)
-  "Format given ICON description as a two lines square image.
-
-ICON can be either a filename or a string 'collection/icon-name'
-according to svg-lib. The resulting image fits exacly the character
-grid such that the squareness of the image is not guaranteed and
-depends on the character pixel size. The returned image is split in
-two parts (top . bottom)"
-
-  (unless (assoc icon notes-list--icons)
-    (let* ((image (if (file-regular-p icon)
-                      (create-image icon)
-                    (let ((collection (nth 0 (split-string icon "/")))
-                          (name (nth 1 (split-string icon "/"))))
-                      (svg-lib-icon name nil :collection collection
-                                    :stroke 0
-                                    :scale .75
-                                    :padding 0))))
-           (img-width (car (image-size image t)))
-           (img-height (cdr (image-size image t)))
-           (ch (frame-char-height))
-           (cw (frame-char-width))
-           (icon-height (* 2 ch))
-           (char-width  (+ 1 (truncate (/ (* 2 ch) cw))))
-           (icon-width  (* char-width cw))
-           ;; (scale (if (< img-height img-width)
-           ;;           (/ (float icon-height) (float img-height))
-           ;;         (/ (float icon-width) (float img-width))))
-           (scale (/ (float icon-height) (float img-height)))
-
-           (scaled-width (truncate (* scale img-width)))
-           (scaled-height (truncate (* scale img-height)))
-           (icon-true-width (truncate (* img-width scale)))
-           (margin (max 0 (- icon-width icon-true-width)))
-           (icon-width (+ icon-width (% margin 2)))
-           (margin (- margin (% margin 2)))
-           (thumbnail (cons (car image) (cl-copy-list (cdr image)))))
-      (plist-put (cdr thumbnail) :height scaled-height)
-      (plist-put (cdr thumbnail) :width  scaled-width)
-      (plist-put (cdr thumbnail) :margin (cons (/ margin 2) 0))
-      (plist-put (cdr thumbnail) :ascent 80)
-
-      (push (cons icon
-                  (cons (propertize (make-string char-width ?-)
-                                    'display (list (list 'slice 0  0 icon-width ch) thumbnail)
-                                    'line-height t)
-			            (propertize (make-string char-width ?-)
-                                    'display (list (list 'slice 0  ch icon-width ch) thumbnail)
-                                    'line-height t)))
-            notes-list--icons)))
-  (cdr (assoc icon notes-list--icons)))
-
-(defvar notes-list--svg-tags nil
-  "SVG tags cache")
-
-(defun notes-list--make-tag (tag)
-
-  (let ((svg-tag (if (string-equal tag "INBOX")
-                     (svg-tag-make tag :face 'notes-list-face-tags :inverse t)
-                   (svg-tag-make tag :face 'default))))
-    (propertize (concat tag " ") 'display svg-tag)))
-
 (defun notes-list-format-tags (tags)
-  "Transform a list of tags into a SVG tags string"
-
+  "Format TAGS as bracketed plain text strings."
   (mapconcat (lambda (tag)
-               (unless (assoc tag notes-list--svg-tags)
-                 (setq notes-list--svg-tags
-                       (add-to-list 'notes-list--svg-tags
-                                    (cons tag (notes-list--make-tag tag)))))
-               (cdr (assoc tag notes-list--svg-tags)))
+               (propertize (format "[%s]" (upcase tag))
+                           'face 'notes-list-face-tags))
              tags " "))
 
 (defun notes-list-format-title (title)
@@ -221,96 +153,80 @@ two parts (top . bottom)"
 
 
 (defun notes-list-format (note)
-  "This function format a note. Result is a two-lines string with
-title at top left, time at top-right, summary at bottom left and
-tags at bottom right. If TITLE or SUMMARY is too long, it is
-truncated."
+  "Format a NOTE as a two-line string.
+Line 1: title (left) and date (right).
+Line 2: summary (left) and tags (right)."
 
   (let* ((window (get-buffer-window (notes-list-buffer)))
          (width (- (window-width window) 1))
-         (icon (or (cdr (assoc "ICON" note)) "note-outline"))
-         (icon (notes-list--make-icon icon))
          (filename (cdr (assoc "FILENAME" note)))
 
-         (tags (or (cdr (assoc "TAGS" note)) ""))
-         (tags (notes-list-format-tags tags))
-         (tags (if notes-list-display-tags
-                   tags
-                 ""))
-         (time (or
-                (cond ((eq notes-list-date-display 'creation)
-                       (cdr (assoc "TIME-CREATION" note)))
-                      ((eq notes-list-date-display 'access)
-                       (cdr (assoc "TIME-ACCESS" note)))
-                      (t
-                       (cdr (assoc "TIME-MODIFICATION" note))))
-                ""))
-         (time (notes-list-format-time time))
-         (time (if notes-list-display-date
-                   time
-                 ""))
+         (tags (or (cdr (assoc "TAGS" note)) '()))
+         (tags-str (if notes-list-display-tags
+                       (notes-list-format-tags tags)
+                     ""))
+
+         (time (or (cond ((eq notes-list-date-display 'creation)
+                          (cdr (assoc "TIME-CREATION" note)))
+                         ((eq notes-list-date-display 'access)
+                          (cdr (assoc "TIME-ACCESS" note)))
+                         (t
+                          (cdr (assoc "TIME-MODIFICATION" note))))
+                   ""))
+         (time-str (if notes-list-display-date
+                       (notes-list-format-time time)
+                     ""))
 
          (title (or (cdr (assoc "TITLE" note)) ""))
-         (title (notes-list-format-title title))
-         (title (if notes-list-display-icons
-                    (concat (car icon) " " title)
-                  title))
-         (title (concat (propertize " " 'display '(raise 0.5)) title))
-         (title (truncate-string-to-width
-                 title
-                 (- width (length time) 1) nil nil "…"))
+         (title-str (notes-list-format-title title))
+         (title-str (concat (propertize " " 'display '(raise 0.25)) title-str))
+         (title-str (truncate-string-to-width
+                     title-str
+                     (- width (length time-str) 1) nil nil "…"))
 
          (summary (or (cdr (assoc "SUMMARY" note)) ""))
-         (summary (notes-list-format-summary summary))
-         (summary (if notes-list-display-icons
-                      (concat (cdr icon) " " summary)
-                    summary))
+         (summary-str (notes-list-format-summary summary))
+         (summary-str (concat (propertize " " 'display '(raise -0.25)) summary-str))
+         (summary-str (truncate-string-to-width
+                       summary-str
+                       (- width (length tags-str) 1) nil nil "…"))
 
          (top-filler (propertize " " 'display
-                                 `(space :align-to (- right ,(length time) 1))))
-         (summary (concat (propertize " " 'display '(raise -0.5))
-                          summary))
-         (summary (truncate-string-to-width summary
-					                        (- width (length tags) 1) nil nil "…"))
+                                 `(space :align-to (- right ,(length time-str) 1))))
          (bottom-filler (propertize " " 'display
-                                    `(space :align-to (- right ,(length tags) 1)))))
-    (propertize (concat title top-filler time
+                                    `(space :align-to (- right ,(length tags-str) 1)))))
+    (propertize (concat title-str top-filler time-str
                         (propertize " " 'display "\n")
-                        summary bottom-filler tags)
+                        summary-str bottom-filler tags-str)
                 'filename filename)))
 
 
-(defun notes-list-parse-org-note (filename)
-  "Parse an org file and extract title, date, summary and tags that
-need to be defined at top level as keywords.
+(defun notes-list-parse-org-note (filename &optional root-directory)
+  "Parse an org file and extract title, date, summary and tags.
 
-Provides sensible defaults for any missing keywords:
-- TITLE:   Defaults to the filename (without extension).
-- DATE:    Defaults to the file's modification time.
-- SUMMARY: Defaults to an empty string.
+Keywords need to be defined at top level. Provides sensible defaults
+for any missing keywords:
+- TITLE:    Defaults to the filename (without extension).
+- DATE:     Defaults to the file's modification time.
+- SUMMARY:  Defaults to an empty string.
 - FILETAGS: Defaults to an empty list.
-- ICON:    Defaults to nil (which the formatter handles)."
+
+CATEGORY is derived from the relative subdirectory path within
+ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
 
   (let ((keep (find-buffer-visiting filename)))
     (with-current-buffer (find-file-noselect filename)
       (let* ((attributes (file-attributes filename))
-             (size (file-attribute-size attributes))
              (access-time (file-attribute-access-time attributes))
              (modification-time (file-attribute-modification-time attributes))
              (info (org-collect-keywords '("TITLE"
-                                           "ICON"
                                            "DATE"
                                            "SUMMARY"
                                            "FILETAGS")))
-             
-             ;; Default for TITLE: filename without extension
+
              (title (or (cadr (assoc "TITLE" info))
                         (file-name-sans-extension (file-name-nondirectory filename))))
 
-             ;; Default for ICON: nil (will be handled by formatter)
-             (icon (cadr (assoc "ICON" info)))
-
-             ;; Default for DATE: file modification time
              (date (cadr (assoc "DATE" info)))
              (time (if date
                        (let ((parsed (parse-time-string date)))
@@ -321,22 +237,30 @@ Provides sensible defaults for any missing keywords:
                                     parsed))))
                      modification-time))
 
-             ;; Default for SUMMARY: empty string
              (summary (or (cadr (assoc "SUMMARY" info)) ""))
 
-             ;; Default for FILETAGS: empty list
              (tags-string (cadr (assoc "FILETAGS" info)))
-             (tags (if tags-string (split-string tags-string) '())))
-        
+             (tags (if tags-string (split-string tags-string) '()))
+
+             (category (if root-directory
+                           (let ((rel (file-relative-name
+                                       (file-name-directory filename)
+                                       (expand-file-name root-directory))))
+                             (if (or (string= rel "./") (string= rel "."))
+                                 "general"
+                               (directory-file-name
+                                (replace-regexp-in-string "/$" "" rel))))
+                         "general")))
+
         (unless keep (kill-buffer))
         (list (cons "FILENAME" filename)
               (cons "TITLE" title)
-              (cons "ICON" icon)
               (cons "TIME-CREATION" time)
               (cons "TIME-MODIFICATION" modification-time)
               (cons "TIME-ACCESS" access-time)
               (cons "SUMMARY" summary)
-              (cons "TAGS" tags))))))
+              (cons "TAGS" tags)
+              (cons "CATEGORY" category))))))
 
 
 (defun notes-list-compare-creation-time (note-1 note-2)
@@ -357,7 +281,6 @@ Provides sensible defaults for any missing keywords:
 
 (defun notes-list-note-p (filename)
   "Return t if FILENAME names a note file."
-
   (file-regular-p filename))
 
 (defvar notes-list--notes nil
@@ -375,10 +298,11 @@ Provides sensible defaults for any missing keywords:
 (defun notes-list-collect-org-notes ()
   (let ((notes nil))
     (dolist (directory notes-list-directories)
-      (dolist (filename (directory-files directory t ".*\\.org$"))
+      (dolist (filename (directory-files-recursively
+                         (expand-file-name directory) "\\.org$"))
         (when (notes-list-note-p filename)
-          (let ((note (notes-list-parse-org-note filename)))
-            (setq notes (add-to-list 'notes note))))))
+          (let ((note (notes-list-parse-org-note filename directory)))
+            (push note notes)))))
     notes))
 
 (defun notes-list-quit ()
@@ -431,6 +355,59 @@ Provides sensible defaults for any missing keywords:
         (notes-list-refresh))
       (setq notes-list--buffer-width window-width))))
 
+(defun notes-list--apply-stripes ()
+  "Apply alternating background face to every other note entry."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((i 0))
+      (while (not (eobp))
+        (when (cl-oddp i)
+          (let ((ov (make-overlay (line-beginning-position)
+                                  (min (1+ (line-end-position)) (point-max)))))
+            (overlay-put ov 'face 'notes-list-face-stripe)
+            (overlay-put ov 'notes-list-stripe t)))
+        (setq i (1+ i))
+        (forward-line 1)))))
+
+(defun notes-list--remove-stripes ()
+  "Remove all stripe overlays from the buffer."
+  (remove-overlays (point-min) (point-max) 'notes-list-stripe t))
+
+(defun notes-list--categories ()
+  "Return a sorted list of all unique categories and tags from collected notes."
+  (let ((cats nil))
+    (dolist (note notes-list--notes)
+      (let ((cat (cdr (assoc "CATEGORY" note)))
+            (tags (cdr (assoc "TAGS" note))))
+        (when (and cat (not (string= cat "general")))
+          (cl-pushnew cat cats :test #'string=))
+        (dolist (tag tags)
+          (cl-pushnew (downcase tag) cats :test #'string=))))
+    (sort cats #'string<)))
+
+(defun notes-list-filter ()
+  "Prompt for a text filter and show only notes whose title or summary match."
+  (interactive)
+  (let ((query (read-string "Filter: " notes-list--filter)))
+    (setq notes-list--filter (if (string-empty-p query) nil query))
+    (notes-list-refresh)))
+
+(defun notes-list-filter-clear ()
+  "Clear all active filters (text and category)."
+  (interactive)
+  (setq notes-list--filter nil)
+  (setq notes-list--category nil)
+  (notes-list-refresh))
+
+(defun notes-list-browse-category ()
+  "Select a category to filter notes. Empty selection clears the filter."
+  (interactive)
+  (let* ((categories (notes-list--categories))
+         (choice (completing-read "Category (empty for all): "
+                                  categories nil nil)))
+    (setq notes-list--category (if (string-empty-p choice) nil choice))
+    (notes-list-refresh)))
+
 (defun notes-list-reload ()
   "Rebuild the note list"
 
@@ -449,37 +426,57 @@ Provides sensible defaults for any missing keywords:
 
 
 (defun notes-list-refresh ()
-  "Rebuild the note list if necessary (no reload)"
+  "Rebuild the note list display (no reload from disk)"
 
   (interactive)
 
-  (let* ((notes (sort notes-list--notes notes-list-sort-function))
+  (let* ((notes (sort (copy-sequence notes-list--notes) notes-list-sort-function))
          (notes (if (eq notes-list-sort-order #'ascending)
                     notes
-                  (reverse notes))))
+                  (reverse notes)))
+         (notes (if notes-list--filter
+                    (cl-remove-if-not
+                     (lambda (note)
+                       (let ((q (downcase notes-list--filter)))
+                         (or (string-match-p q (downcase (or (cdr (assoc "TITLE" note)) "")))
+                             (string-match-p q (downcase (or (cdr (assoc "SUMMARY" note)) ""))))))
+                     notes)
+                  notes))
+         (notes (if notes-list--category
+                    (cl-remove-if-not
+                     (lambda (note)
+                       (let ((cat (cdr (assoc "CATEGORY" note)))
+                             (tags (mapcar #'downcase
+                                           (or (cdr (assoc "TAGS" note)) '()))))
+                         (or (and cat (string= notes-list--category cat))
+                             (member notes-list--category tags))))
+                     notes)
+                  notes)))
     (with-current-buffer (notes-list-buffer)
       (let ((filename (get-text-property (point) 'filename)))
-	    (beginning-of-line)
-	    (let ((line (count-lines 1 (point)))
+        (beginning-of-line)
+        (let ((line (count-lines 1 (point)))
               (inhibit-read-only t))
           (erase-buffer)
+          (notes-list--remove-stripes)
           (insert (mapconcat #'notes-list-format notes "\n"))
           (insert "\n")
+          (notes-list--apply-stripes)
           (goto-char (point-min))
           (let ((match (text-property-search-forward 'filename filename t)))
             (if match
-		        (goto-char (prop-match-beginning match))
+                (goto-char (prop-match-beginning match))
               (forward-line line)))
-          (beginning-of-line))))))
-
-(defun notes-list-toggle-icons ()
-  "Toggle icons display"
-
-  (interactive)
-  (if notes-list-display-icons
-      (setq notes-list-display-icons nil)
-    (setq notes-list-display-icons t))
-  (notes-list-refresh))
+          (beginning-of-line)
+          (setq header-line-format
+                (let ((parts nil))
+                  (when notes-list--category
+                    (push (format "Category: %s" notes-list--category) parts))
+                  (when notes-list--filter
+                    (push (format "Filter: %s" notes-list--filter) parts))
+                  (when parts
+                    (concat "  " (string-join (reverse parts) "  |  ")
+                            "  [ESC to clear]")))))))))
 
 (defun notes-list-toggle-date ()
   "Toggle date display"
@@ -509,71 +506,44 @@ Provides sensible defaults for any missing keywords:
 
   :keymap (let ((map (make-sparse-keymap)))
             (define-key map (kbd "d") #'notes-list-toggle-date)
-            (define-key map (kbd "i") #'notes-list-toggle-icons)
             (define-key map (kbd "t") #'notes-list-toggle-tags)
             (define-key map (kbd "r") #'notes-list-reload)
             (define-key map (kbd "g") #'notes-list-refresh)
             (define-key map (kbd "q") #'notes-list-quit)
             (define-key map (kbd "s") #'notes-list-reverse-sort-order)
+            (define-key map (kbd "/") #'notes-list-filter)
+            (define-key map (kbd "c") #'notes-list-browse-category)
+            (define-key map (kbd "ESC") #'notes-list-filter-clear)
             (define-key map (kbd "SPC") #'notes-list-show-note-other-window)
             (define-key map (kbd "<tab>") #'notes-list-open-note-other-window)
             (define-key map (kbd "<RET>") #'notes-list-open-note)
-            (define-key map (kbd "<left") nil)
-            (define-key map (kbd "<right") nil)
+            (define-key map (kbd "<left>") nil)
+            (define-key map (kbd "<right>") nil)
             (define-key map (kbd "<up>") #'notes-list-prev-note)
             (define-key map (kbd "<down>") #'notes-list-next-note)
             map)
   (when notes-list-mode
-    (setq stripes-unit 1)
-    (stripes-mode t)
     (setq hl-line-overlay-priority 100)
     (hl-line-mode t)
-    (face-remap-set-base 'stripes :inherit 'notes-list-face-stripe)
     (face-remap-add-relative 'hl-line :inherit 'notes-list-face-highlight)
     (setq-local cursor-type nil)
     (read-only-mode t)
     (add-hook 'window-size-change-functions #'notes-list--resize-hook)))
 
-;; ;;;###autoload
-;; (defun notes-list ()
-;;   "Display note list in current buffer"
-
-;;   (interactive)
-;;   (switch-to-buffer (notes-list-buffer))
-;;   (notes-list-reload)
-;;   (notes-list-mode 1))
-
 ;;;###autoload
 (defun notes-list ()
-  "Open a new frame and split it into two vertical windows. Display `notes-list` on the left and `*scratch*` on the right."
+  "Open a new frame split into two windows: notes-list on the left, scratch on the right."
   (interactive)
-  ;; Use fixed farme dimensions in characters
   (let ((fixed-frame-width 120)
         (fixed-frame-height 40))
-    
-    ;; Create the new frame with the fixed dimensions
-    (let ((new-frame (make-frame `((width . ,fixed-frame-width) 
+    (let ((new-frame (make-frame `((width . ,fixed-frame-width)
                                    (height . ,fixed-frame-height)))))
-      
-      ;; Switch to the new frame
       (select-frame-set-input-focus new-frame)
-
-      ;; Calculate width for the right window (contents)
       (let ((right-window-width (round (* fixed-frame-width 0.35))))
         (split-window-right right-window-width))
-
-      ;; Display notes-list in the left window
       (switch-to-buffer (notes-list-buffer))
-
-      ;; Perform any setup for notes-list here
       (notes-list-reload)
       (notes-list-mode 1)
-
-      ;; my defaults, no tags or icons
-      (setq notes-list-display-tags nil)
-      (setq notes-list-display-icons nil)
-      
-      ;; Move to the right window and open *scratch*
       (other-window 1)
       (switch-to-buffer "*scratch*"))))
 
