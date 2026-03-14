@@ -115,7 +115,7 @@
   "Face to use for alternating note style in list.")
 
 (defface notes-list-face-highlight
-  '((t (:inherit default :box (:line-width -1 :color "gray50" :style nil))))
+  '((t (:inherit secondary-selection)))
   "Face to use for the currently selected note.")
 
 (defvar notes-list--filter nil
