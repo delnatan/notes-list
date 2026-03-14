@@ -114,6 +114,10 @@
   '((t (:inherit highlight)))
   "Face to use for alternating note style in list.")
 
+(defface notes-list-face-highlight
+  '((t (:inherit default :box (:line-width -1 :color "gray50" :style nil))))
+  "Face to use for the currently selected note.")
+
 (defvar notes-list--filter nil
   "Current text filter string, or nil for no filter.")
 
@@ -475,6 +479,41 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
                     (concat "  " (string-join (reverse parts) "  |  ")
                             "  [ESC to clear]")))))))))
 
+(defun notes-list-help ()
+  "Show a help buffer describing notes-list keybindings and note format."
+  (interactive)
+  (with-help-window "*notes-list help*"
+    (princ "notes-list — quick reference\n")
+    (princ "════════════════════════════\n\n")
+    (princ "Navigation\n")
+    (princ "  n / C-n / ↓   Next note\n")
+    (princ "  p / C-p / ↑   Previous note\n\n")
+    (princ "Opening notes\n")
+    (princ "  RET            Open note in current window\n")
+    (princ "  TAB            Open note in other window\n")
+    (princ "  SPC            Preview note in other window\n\n")
+    (princ "Search & filter\n")
+    (princ "  /              Filter by title or summary text\n")
+    (princ "  c              Browse and filter by category or tag\n")
+    (princ "  ESC            Clear all active filters\n\n")
+    (princ "Display toggles\n")
+    (princ "  t              Toggle tag display\n")
+    (princ "  d              Toggle date display\n")
+    (princ "  s              Reverse sort order\n\n")
+    (princ "Other\n")
+    (princ "  r              Reload notes from disk\n")
+    (princ "  g              Refresh display\n")
+    (princ "  q              Quit\n")
+    (princ "  ?              Show this help\n\n")
+    (princ "Note format (org keywords)\n")
+    (princ "──────────────────────────\n")
+    (princ "  #+TITLE:    My note title        (defaults to filename)\n")
+    (princ "  #+DATE:     2024-01-15           (defaults to modification time)\n")
+    (princ "  #+SUMMARY:  One-line description (optional)\n")
+    (princ "  #+FILETAGS: TAG1 TAG2            (optional; used for category filter)\n\n")
+    (princ "Notes in subdirectories are collected recursively.\n")
+    (princ "The subdirectory name also acts as a browsable category.\n")))
+
 (defun notes-list-toggle-date ()
   "Toggle date display"
 
@@ -520,10 +559,12 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
             (define-key map (kbd "<down>") #'notes-list-next-note)
             (define-key map (kbd "C-p") #'notes-list-prev-note)
             (define-key map (kbd "C-n") #'notes-list-next-note)
+            (define-key map (kbd "?") #'notes-list-help)
             map)
   (when notes-list-mode
     (setq hl-line-overlay-priority 100)
     (hl-line-mode t)
+    (face-remap-add-relative 'hl-line :inherit 'notes-list-face-highlight)
     (setq-local cursor-type nil)
     (read-only-mode t)
     (add-hook 'window-size-change-functions #'notes-list--resize-hook)))
