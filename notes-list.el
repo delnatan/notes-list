@@ -111,15 +111,19 @@
   :group 'notes-list)
 
 (defface notes-list-face-stripe
-  '((t (:inherit highlight)))
-  "Face to use for alternating note style in list.")
+  '((t (:inherit highlight :extend t)))
+  "Face for alternating note rows.")
 
 (defface notes-list-face-highlight
-  '((t (:inherit secondary-selection)))
-  "Face to use for the currently selected note.")
+  '((t (:inherit hl-line :extend t)))
+  "Face for the currently selected note background.")
+
+(defface notes-list-face-indicator
+  '((t (:inherit font-lock-keyword-face)))
+  "Face for the left-edge selection indicator character.")
 
 (defface notes-list-face-marked
-  '((t (:inherit diff-removed :extend t)))
+  '((t (:strike-through t :extend t)))
   "Face for notes marked for deletion.")
 
 (defvar notes-list--filter nil
@@ -130,6 +134,9 @@
 
 (defvar notes-list--category nil
   "Current category filter string, or nil for all categories.")
+
+(defvar-local notes-list--selection-overlay nil
+  "Overlay for the current selection indicator.")
 
 (defvar notes-list-collect-notes-function #'notes-list-collect-org-notes
   "Function to used to build list of notes to display. Customize
@@ -381,6 +388,19 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
   "Remove all stripe overlays from the buffer."
   (remove-overlays (point-min) (point-max) 'notes-list-stripe t))
 
+(defun notes-list--update-selection ()
+  "Update the selection indicator to the current line."
+  (when (and notes-list-mode (get-text-property (point) 'filename))
+    (let ((beg (line-beginning-position))
+          (end (min (1+ (line-end-position)) (point-max))))
+      (if notes-list--selection-overlay
+          (move-overlay notes-list--selection-overlay beg end)
+        (setq notes-list--selection-overlay (make-overlay beg end))
+        (overlay-put notes-list--selection-overlay 'priority 50)
+        (overlay-put notes-list--selection-overlay 'face 'notes-list-face-highlight))
+      (overlay-put notes-list--selection-overlay 'before-string
+                   (propertize "▌" 'face 'notes-list-face-indicator)))))
+
 (defun notes-list--apply-marks ()
   "Apply marked face overlay to all notes in the marked list."
   (when notes-list--marked
@@ -393,6 +413,8 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
                                     (min (1+ (line-end-position)) (point-max)))))
               (overlay-put ov 'face 'notes-list-face-marked)
               (overlay-put ov 'priority 2)
+              (overlay-put ov 'before-string
+                           (propertize "D" 'face 'font-lock-warning-face))
               (overlay-put ov 'notes-list-mark t))))
         (forward-line 1)))))
 
@@ -415,6 +437,8 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
           (let ((ov (make-overlay beg end)))
             (overlay-put ov 'face 'notes-list-face-marked)
             (overlay-put ov 'priority 2)
+            (overlay-put ov 'before-string
+                         (propertize "D" 'face 'font-lock-warning-face))
             (overlay-put ov 'notes-list-mark t))))
       (notes-list-next-note))))
 
@@ -534,6 +558,9 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
               (inhibit-read-only t))
           (notes-list--remove-stripes)
           (notes-list--remove-mark-overlays)
+          (when notes-list--selection-overlay
+            (delete-overlay notes-list--selection-overlay)
+            (setq notes-list--selection-overlay nil))
           (erase-buffer)
           (insert (mapconcat #'notes-list-format notes "\n"))
           (insert "\n")
@@ -647,29 +674,27 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
             (define-key map (kbd "?") #'notes-list-help)
             map)
   (when notes-list-mode
-    (setq hl-line-overlay-priority 100)
-    (hl-line-mode t)
-    (face-remap-add-relative 'hl-line :inherit 'notes-list-face-highlight)
     (setq-local cursor-type nil)
     (read-only-mode t)
+    (add-hook 'post-command-hook #'notes-list--update-selection nil t)
     (add-hook 'window-size-change-functions #'notes-list--resize-hook)))
 
 ;;;###autoload
 (defun notes-list ()
-  "Open a new frame split into two windows: notes-list on the left, scratch on the right."
+  "Open a new frame with notes-list as a pinned left side window."
   (interactive)
-  (let ((fixed-frame-width 120)
-        (fixed-frame-height 40))
-    (let ((new-frame (make-frame `((width . ,fixed-frame-width)
-                                   (height . ,fixed-frame-height)))))
-      (select-frame-set-input-focus new-frame)
-      (let ((right-window-width (round (* fixed-frame-width 0.35))))
-        (split-window-right right-window-width))
-      (switch-to-buffer (notes-list-buffer))
+  (let* ((fixed-frame-width 120)
+         (fixed-frame-height 40)
+         (new-frame (make-frame `((width . ,fixed-frame-width)
+                                  (height . ,fixed-frame-height)))))
+    (select-frame-set-input-focus new-frame)
+    (let ((side-window (display-buffer-in-side-window
+                        (notes-list-buffer)
+                        `((side . left)
+                          (window-width . 0.35)))))
+      (select-window side-window)
       (notes-list-reload)
-      (notes-list-mode 1)
-      (other-window 1)
-      (switch-to-buffer "*scratch*"))))
+      (notes-list-mode 1))))
 
 
 (provide 'notes-list)
