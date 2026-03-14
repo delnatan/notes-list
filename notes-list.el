@@ -111,7 +111,7 @@
   :group 'notes-list)
 
 (defface notes-list-face-stripe
-  '((t (:inherit fringe)))
+  '((t (:inherit highlight)))
   "Face to use for alternating note style in list.")
 
 (defvar notes-list--filter nil
@@ -361,6 +361,7 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
           (let ((ov (make-overlay (line-beginning-position)
                                   (min (1+ (line-end-position)) (point-max)))))
             (overlay-put ov 'face 'notes-list-face-stripe)
+            (overlay-put ov 'priority 1)
             (overlay-put ov 'notes-list-stripe t)))
         (setq i (1+ i))
         (forward-line 1)))))
@@ -517,6 +518,8 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
             (define-key map (kbd "<right>") nil)
             (define-key map (kbd "<up>") #'notes-list-prev-note)
             (define-key map (kbd "<down>") #'notes-list-next-note)
+            (define-key map (kbd "C-p") #'notes-list-prev-note)
+            (define-key map (kbd "C-n") #'notes-list-next-note)
             map)
   (when notes-list-mode
     (setq hl-line-overlay-priority 100)
