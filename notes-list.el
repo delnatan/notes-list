@@ -111,12 +111,8 @@
   :group 'notes-list)
 
 (defface notes-list-face-stripe
-  `((t (:inherit highlight)))
+  '((t (:inherit fringe)))
   "Face to use for alternating note style in list.")
-
-(defface notes-list-face-highlight
-  `((t (:inherit region)))
-  "Face to use for selected note style in list.")
 
 (defvar notes-list--filter nil
   "Current text filter string, or nil for no filter.")
@@ -525,7 +521,6 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
   (when notes-list-mode
     (setq hl-line-overlay-priority 100)
     (hl-line-mode t)
-    (face-remap-add-relative 'hl-line :inherit 'notes-list-face-highlight)
     (setq-local cursor-type nil)
     (read-only-mode t)
     (add-hook 'window-size-change-functions #'notes-list--resize-hook)))
