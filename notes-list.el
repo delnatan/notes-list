@@ -46,14 +46,15 @@
 ;;; Code:
 (require 'stripes)
 (require 'svg-lib)
-(require 'svg-tag-mode)
+;; removed svg icons
+;; (require 'svg-tag-mode)
 (require 'cl-lib)
 
 (defgroup notes-list nil
   "Note list"
   :group 'convenience)
 
-(defcustom notes-list-directories '("~/Documents/Denotes/")
+(defcustom notes-list-directories '("~/Library/CloudStorage/Dropbox/org/notes")
   "List of directories where to search notes"
   :type '(repeat directory)
   :group 'notes-list)
@@ -150,9 +151,9 @@ two parts (top . bottom)"
                     (let ((collection (nth 0 (split-string icon "/")))
                           (name (nth 1 (split-string icon "/"))))
                       (svg-lib-icon name nil :collection collection
-                                             :stroke 0
-                                             :scale .75
-                                             :padding 0))))
+                                    :stroke 0
+                                    :scale .75
+                                    :padding 0))))
            (img-width (car (image-size image t)))
            (img-height (cdr (image-size image t)))
            (ch (frame-char-height))
@@ -172,20 +173,20 @@ two parts (top . bottom)"
            (icon-width (+ icon-width (% margin 2)))
            (margin (- margin (% margin 2)))
            (thumbnail (cons (car image) (cl-copy-list (cdr image)))))
-    (plist-put (cdr thumbnail) :height scaled-height)
-    (plist-put (cdr thumbnail) :width  scaled-width)
-    (plist-put (cdr thumbnail) :margin (cons (/ margin 2) 0))
-    (plist-put (cdr thumbnail) :ascent 80)
+      (plist-put (cdr thumbnail) :height scaled-height)
+      (plist-put (cdr thumbnail) :width  scaled-width)
+      (plist-put (cdr thumbnail) :margin (cons (/ margin 2) 0))
+      (plist-put (cdr thumbnail) :ascent 80)
 
-    (push (cons icon
-                (cons (propertize (make-string char-width ?-)
-                                  'display (list (list 'slice 0  0 icon-width ch) thumbnail)
-                                  'line-height t)
-                      (propertize (make-string char-width ?-)
-                                  'display (list (list 'slice 0  ch icon-width ch) thumbnail)
-                                  'line-height t)))
-          notes-list--icons)))
-    (cdr (assoc icon notes-list--icons)))
+      (push (cons icon
+                  (cons (propertize (make-string char-width ?-)
+                                    'display (list (list 'slice 0  0 icon-width ch) thumbnail)
+                                    'line-height t)
+			            (propertize (make-string char-width ?-)
+                                    'display (list (list 'slice 0  ch icon-width ch) thumbnail)
+                                    'line-height t)))
+            notes-list--icons)))
+  (cdr (assoc icon notes-list--icons)))
 
 (defvar notes-list--svg-tags nil
   "SVG tags cache")
@@ -195,7 +196,7 @@ two parts (top . bottom)"
   (let ((svg-tag (if (string-equal tag "INBOX")
                      (svg-tag-make tag :face 'notes-list-face-tags :inverse t)
                    (svg-tag-make tag :face 'default))))
-  (propertize (concat tag " ") 'display svg-tag)))
+    (propertize (concat tag " ") 'display svg-tag)))
 
 (defun notes-list-format-tags (tags)
   "Transform a list of tags into a SVG tags string"
@@ -243,7 +244,7 @@ truncated."
                        (cdr (assoc "TIME-ACCESS" note)))
                       (t
                        (cdr (assoc "TIME-MODIFICATION" note))))
-                   ""))
+                ""))
          (time (notes-list-format-time time))
          (time (if notes-list-display-date
                    time
@@ -256,8 +257,8 @@ truncated."
                   title))
          (title (concat (propertize " " 'display '(raise 0.5)) title))
          (title (truncate-string-to-width
-                    title
-                    (- width (length time) 1) nil nil "…"))
+                 title
+                 (- width (length time) 1) nil nil "…"))
 
          (summary (or (cdr (assoc "SUMMARY" note)) ""))
          (summary (notes-list-format-summary summary))
@@ -268,9 +269,9 @@ truncated."
          (top-filler (propertize " " 'display
                                  `(space :align-to (- right ,(length time) 1))))
          (summary (concat (propertize " " 'display '(raise -0.5))
-                              summary))
+                          summary))
          (summary (truncate-string-to-width summary
-                             (- width (length tags) 1) nil nil "…"))
+					                        (- width (length tags) 1) nil nil "…"))
          (bottom-filler (propertize " " 'display
                                     `(space :align-to (- right ,(length tags) 1)))))
     (propertize (concat title top-filler time
@@ -278,9 +279,17 @@ truncated."
                         summary bottom-filler tags)
                 'filename filename)))
 
+
 (defun notes-list-parse-org-note (filename)
   "Parse an org file and extract title, date, summary and tags that
-need to be defined at top level as keywords."
+need to be defined at top level as keywords.
+
+Provides sensible defaults for any missing keywords:
+- TITLE:   Defaults to the filename (without extension).
+- DATE:    Defaults to the file's modification time.
+- SUMMARY: Defaults to an empty string.
+- FILETAGS: Defaults to an empty list.
+- ICON:    Defaults to nil (which the formatter handles)."
 
   (let ((keep (find-buffer-visiting filename)))
     (with-current-buffer (find-file-noselect filename)
@@ -293,17 +302,32 @@ need to be defined at top level as keywords."
                                            "DATE"
                                            "SUMMARY"
                                            "FILETAGS")))
-           (title (cadr (assoc "TITLE" info)))
-           (icon (cadr (assoc "ICON" info)))
-           (date (cadr (assoc "DATE" info)))
-           (time (parse-time-string date))
-           (time (let ((n 0))
-                   (mapcar (lambda (x)
-                             (if (< (setq n (1+ n)) 7) (or x 0) x)) time)))
-           (time (encode-time time))
-           (summary (cadr (assoc "SUMMARY" info)))
-           (tags (cadr (assoc "FILETAGS" info)))
-           (tags (split-string tags)))
+             
+             ;; Default for TITLE: filename without extension
+             (title (or (cadr (assoc "TITLE" info))
+                        (file-name-sans-extension (file-name-nondirectory filename))))
+
+             ;; Default for ICON: nil (will be handled by formatter)
+             (icon (cadr (assoc "ICON" info)))
+
+             ;; Default for DATE: file modification time
+             (date (cadr (assoc "DATE" info)))
+             (time (if date
+                       (let ((parsed (parse-time-string date)))
+                         (encode-time
+                          (let ((n 0))
+                            (mapcar (lambda (x)
+                                      (if (< (setq n (1+ n)) 7) (or x 0) x))
+                                    parsed))))
+                     modification-time))
+
+             ;; Default for SUMMARY: empty string
+             (summary (or (cadr (assoc "SUMMARY" info)) ""))
+
+             ;; Default for FILETAGS: empty list
+             (tags-string (cadr (assoc "FILETAGS" info)))
+             (tags (if tags-string (split-string tags-string) '())))
+        
         (unless keep (kill-buffer))
         (list (cons "FILENAME" filename)
               (cons "TITLE" title)
@@ -377,9 +401,9 @@ need to be defined at top level as keywords."
 (defun notes-list-open (filename)
   (funcall notes-list-open-function filename))
 
- (defun notes-list-open-note ()
-   (interactive)
-   (let ((filename (get-text-property (point) 'filename)))
+(defun notes-list-open-note ()
+  (interactive)
+  (let ((filename (get-text-property (point) 'filename)))
     (notes-list-open filename)))
 
 
@@ -393,7 +417,7 @@ need to be defined at top level as keywords."
   (interactive)
   (let ((filename (get-text-property (point) 'filename)))
     (with-selected-window (next-window)
-    (find-file filename))))
+      (find-file filename))))
 
 (defvar notes-list--buffer-width nil
   "Notes list buffer width")
@@ -433,20 +457,20 @@ need to be defined at top level as keywords."
          (notes (if (eq notes-list-sort-order #'ascending)
                     notes
                   (reverse notes))))
-  (with-current-buffer (notes-list-buffer)
-    (let ((filename (get-text-property (point) 'filename)))
-      (beginning-of-line)
-      (let ((line (count-lines 1 (point)))
-            (inhibit-read-only t))
-        (erase-buffer)
-        (insert (mapconcat #'notes-list-format notes "\n"))
-        (insert "\n")
-        (goto-char (point-min))
-        (let ((match (text-property-search-forward 'filename filename t)))
-          (if match
-              (goto-char (prop-match-beginning match))
-            (forward-line line)))
-        (beginning-of-line))))))
+    (with-current-buffer (notes-list-buffer)
+      (let ((filename (get-text-property (point) 'filename)))
+	    (beginning-of-line)
+	    (let ((line (count-lines 1 (point)))
+              (inhibit-read-only t))
+          (erase-buffer)
+          (insert (mapconcat #'notes-list-format notes "\n"))
+          (insert "\n")
+          (goto-char (point-min))
+          (let ((match (text-property-search-forward 'filename filename t)))
+            (if match
+		        (goto-char (prop-match-beginning match))
+              (forward-line line)))
+          (beginning-of-line))))))
 
 (defun notes-list-toggle-icons ()
   "Toggle icons display"
@@ -510,14 +534,49 @@ need to be defined at top level as keywords."
     (read-only-mode t)
     (add-hook 'window-size-change-functions #'notes-list--resize-hook)))
 
+;; ;;;###autoload
+;; (defun notes-list ()
+;;   "Display note list in current buffer"
+
+;;   (interactive)
+;;   (switch-to-buffer (notes-list-buffer))
+;;   (notes-list-reload)
+;;   (notes-list-mode 1))
+
 ;;;###autoload
 (defun notes-list ()
-  "Display note list in current buffer"
-
+  "Open a new frame and split it into two vertical windows. Display `notes-list` on the left and `*scratch*` on the right."
   (interactive)
-  (switch-to-buffer (notes-list-buffer))
-  (notes-list-reload)
-  (notes-list-mode 1))
+  ;; Use fixed farme dimensions in characters
+  (let ((fixed-frame-width 120)
+        (fixed-frame-height 40))
+    
+    ;; Create the new frame with the fixed dimensions
+    (let ((new-frame (make-frame `((width . ,fixed-frame-width) 
+                                   (height . ,fixed-frame-height)))))
+      
+      ;; Switch to the new frame
+      (select-frame-set-input-focus new-frame)
+
+      ;; Calculate width for the right window (contents)
+      (let ((right-window-width (round (* fixed-frame-width 0.35))))
+        (split-window-right right-window-width))
+
+      ;; Display notes-list in the left window
+      (switch-to-buffer (notes-list-buffer))
+
+      ;; Perform any setup for notes-list here
+      (notes-list-reload)
+      (notes-list-mode 1)
+
+      ;; my defaults, no tags or icons
+      (setq notes-list-display-tags nil)
+      (setq notes-list-display-icons nil)
+      
+      ;; Move to the right window and open *scratch*
+      (other-window 1)
+      (switch-to-buffer "*scratch*"))))
+
 
 (provide 'notes-list)
 ;;; notes-list.el ends here
