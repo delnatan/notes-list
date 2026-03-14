@@ -118,8 +118,15 @@
   '((t (:inherit secondary-selection)))
   "Face to use for the currently selected note.")
 
+(defface notes-list-face-marked
+  '((t (:inherit diff-removed :extend t)))
+  "Face for notes marked for deletion.")
+
 (defvar notes-list--filter nil
   "Current text filter string, or nil for no filter.")
+
+(defvar notes-list--marked nil
+  "List of filenames marked for deletion.")
 
 (defvar notes-list--category nil
   "Current category filter string, or nil for all categories.")
@@ -374,6 +381,73 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
   "Remove all stripe overlays from the buffer."
   (remove-overlays (point-min) (point-max) 'notes-list-stripe t))
 
+(defun notes-list--apply-marks ()
+  "Apply marked face overlay to all notes in the marked list."
+  (when notes-list--marked
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((filename (get-text-property (point) 'filename)))
+          (when (member filename notes-list--marked)
+            (let ((ov (make-overlay (line-beginning-position)
+                                    (min (1+ (line-end-position)) (point-max)))))
+              (overlay-put ov 'face 'notes-list-face-marked)
+              (overlay-put ov 'priority 2)
+              (overlay-put ov 'notes-list-mark t))))
+        (forward-line 1)))))
+
+(defun notes-list--remove-mark-overlays ()
+  "Remove all mark overlays from the buffer."
+  (remove-overlays (point-min) (point-max) 'notes-list-mark t))
+
+(defun notes-list-mark-note ()
+  "Toggle mark on the note at point and advance to the next note."
+  (interactive)
+  (let ((filename (get-text-property (point) 'filename)))
+    (when filename
+      (if (member filename notes-list--marked)
+          (setq notes-list--marked (delete filename notes-list--marked))
+        (push filename notes-list--marked))
+      (let ((beg (line-beginning-position))
+            (end (min (1+ (line-end-position)) (point-max))))
+        (remove-overlays beg end 'notes-list-mark t)
+        (when (member filename notes-list--marked)
+          (let ((ov (make-overlay beg end)))
+            (overlay-put ov 'face 'notes-list-face-marked)
+            (overlay-put ov 'priority 2)
+            (overlay-put ov 'notes-list-mark t))))
+      (notes-list-next-note))))
+
+(defun notes-list-unmark-note ()
+  "Unmark the note at point."
+  (interactive)
+  (let ((filename (get-text-property (point) 'filename)))
+    (when filename
+      (setq notes-list--marked (delete filename notes-list--marked))
+      (remove-overlays (line-beginning-position)
+                       (min (1+ (line-end-position)) (point-max))
+                       'notes-list-mark t))))
+
+(defun notes-list-unmark-all ()
+  "Unmark all marked notes."
+  (interactive)
+  (setq notes-list--marked nil)
+  (notes-list--remove-mark-overlays))
+
+(defun notes-list-delete-marked ()
+  "Delete all marked notes after confirmation."
+  (interactive)
+  (if (null notes-list--marked)
+      (message "No notes marked for deletion.")
+    (let ((count (length notes-list--marked)))
+      (when (yes-or-no-p (format "Permanently delete %d note%s? "
+                                 count (if (= count 1) "" "s")))
+        (dolist (filename notes-list--marked)
+          (delete-file filename))
+        (setq notes-list--marked nil)
+        (notes-list-reload)
+        (message "Deleted %d note%s." count (if (= count 1) "" "s"))))))
+
 (defun notes-list--categories ()
   "Return a sorted list of all unique categories and tags from collected notes."
   (let ((cats nil))
@@ -458,11 +532,13 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
         (beginning-of-line)
         (let ((line (count-lines 1 (point)))
               (inhibit-read-only t))
-          (erase-buffer)
           (notes-list--remove-stripes)
+          (notes-list--remove-mark-overlays)
+          (erase-buffer)
           (insert (mapconcat #'notes-list-format notes "\n"))
           (insert "\n")
           (notes-list--apply-stripes)
+          (notes-list--apply-marks)
           (goto-char (point-min))
           (let ((match (text-property-search-forward 'filename filename t)))
             (if match
@@ -496,6 +572,11 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
     (princ "  /              Filter by title or summary text\n")
     (princ "  c              Browse and filter by category or tag\n")
     (princ "  ESC            Clear all active filters\n\n")
+    (princ "Marking & deletion\n")
+    (princ "  m              Toggle mark on note, advance to next\n")
+    (princ "  u              Unmark note at point\n")
+    (princ "  U              Unmark all marked notes\n")
+    (princ "  x              Delete all marked notes (asks confirmation)\n\n")
     (princ "Display toggles\n")
     (princ "  t              Toggle tag display\n")
     (princ "  d              Toggle date display\n")
@@ -559,6 +640,10 @@ ROOT-DIRECTORY, defaulting to \"general\" for root-level files."
             (define-key map (kbd "<down>") #'notes-list-next-note)
             (define-key map (kbd "C-p") #'notes-list-prev-note)
             (define-key map (kbd "C-n") #'notes-list-next-note)
+            (define-key map (kbd "m") #'notes-list-mark-note)
+            (define-key map (kbd "u") #'notes-list-unmark-note)
+            (define-key map (kbd "U") #'notes-list-unmark-all)
+            (define-key map (kbd "x") #'notes-list-delete-marked)
             (define-key map (kbd "?") #'notes-list-help)
             map)
   (when notes-list-mode
