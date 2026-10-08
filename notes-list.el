@@ -239,9 +239,9 @@ Each entry is (FUNCTION NAME ORDER DATE-DISPLAY).")
 ;;; Formatting
 
 (defun notes-list-format-tags (tags)
-  "Format TAGS as bracketed plain text strings."
+  "Format TAGS as lower case #hashtags."
   (mapconcat (lambda (tag)
-               (propertize (format "[%s]" (upcase tag))
+               (propertize (concat "#" (downcase tag))
                            'face 'notes-list-face-tags))
              tags " "))
 
@@ -265,22 +265,46 @@ Each entry is (FUNCTION NAME ORDER DATE-DISPLAY).")
 (defun notes-list-format-summary (summary)
   (propertize summary 'face 'notes-list-face-summary))
 
+(defvar notes-list--icon-family 'unknown
+  "Font family icons are drawn with, nil if none is installed.")
+
+(defun notes-list--icon-family ()
+  "Return an installed Nerd Font family to draw icons with, or nil.
+Prefers `nerd-icons-font-family', then any \"... Nerd Font Mono\",
+then any other Nerd Font, since they all contain the icons."
+  (when (eq notes-list--icon-family 'unknown)
+    (let ((families (font-family-list)))
+      (setq notes-list--icon-family
+            (or (car (member (bound-and-true-p nerd-icons-font-family) families))
+                (cl-find-if (lambda (family) (string-match-p "Nerd Font Mono\\'" family))
+                            families)
+                (cl-find-if (lambda (family) (string-match-p "Nerd Font" family))
+                            families)))))
+  notes-list--icon-family)
+
 (defun notes-list--make-icon (name)
   "Return a nerd-icons string for NAME, written as in \"material/notebook\"."
-  (let ((lookup (lambda (base)
-                  (ignore-errors
-                    (nerd-icons-mdicon
-                     (concat "nf-md-" (replace-regexp-in-string "-" "_" base))
-                     :face 'notes-list-face-icon)))))
-    (if (string-empty-p name)
-        " "
-      (or (funcall lookup (file-name-nondirectory name))
-          (funcall lookup "notebook")
-          " "))))
+  (let* ((lookup (lambda (base)
+                   (ignore-errors
+                     (nerd-icons-mdicon
+                      (concat "nf-md-" (replace-regexp-in-string "-" "_" base))))))
+         (glyph (and (not (string-empty-p name))
+                     (or (funcall lookup (file-name-nondirectory name))
+                         (funcall lookup "notebook"))))
+         (family (and (display-graphic-p) (notes-list--icon-family))))
+    (if glyph
+        (propertize (substring-no-properties glyph) 'face
+                    (if family
+                        `(:family ,family :inherit notes-list-face-icon)
+                      'notes-list-face-icon))
+      " ")))
 
 (defun notes-list--icon (note)
-  "Return NOTE's icon, or nil when icons are not displayed."
-  (when (and notes-list-display-icons (require 'nerd-icons nil t))
+  "Return NOTE's icon, or nil when icons are not displayed.
+In graphical frames icons need an installed Nerd Font."
+  (when (and notes-list-display-icons
+             (require 'nerd-icons nil t)
+             (or (not (display-graphic-p)) (notes-list--icon-family)))
     (let ((name (or (notes-list--get note "ICON") notes-list-default-icon "")))
       (or (gethash name notes-list--icon-cache)
           (puthash name (notes-list--make-icon name) notes-list--icon-cache)))))
@@ -334,8 +358,12 @@ Both lines start with gutter cells for the selection bar and mark."
                      " "))
          (right-str (truncate-string-to-width
                      right-str (max 0 (/ (- width gutter) 2)) nil nil "…"))
+         (summary (notes-list--get note "SUMMARY"))
          (summary-str (truncate-string-to-width
-                       (notes-list-format-summary (or (notes-list--get note "SUMMARY") ""))
+                       (if (and summary (not (string-empty-p summary)))
+                           (notes-list-format-summary summary)
+                         (propertize (file-name-nondirectory filename)
+                                     'face 'notes-list-face-time))
                        (max 1 (- width gutter (string-width right-str) 2))
                        nil nil "…")))
     (propertize (concat (notes-list--slot 'bar) (notes-list--slot 'mark)
