@@ -57,6 +57,7 @@
 ;;; Code:
 (require 'cl-lib)
 (require 'subr-x)
+(require 'color)
 
 (declare-function nerd-icons-mdicon "ext:nerd-icons")
 
@@ -148,6 +149,13 @@ the list is shown as a side window in the selected frame."
   :type 'boolean
   :group 'notes-list)
 
+(defcustom notes-list-selection-tint 0.15
+  "How much of the indicator color tints the selected note's background.
+0 disables the tint.  A background set on `notes-list-face-highlight'
+takes precedence."
+  :type 'number
+  :group 'notes-list)
+
 (defface notes-list-face-title
   '((t (:inherit bold)))
   "Face for notes title"
@@ -183,8 +191,9 @@ the list is shown as a side window in the selected frame."
   "Face for alternating note rows.")
 
 (defface notes-list-face-highlight
-  '((t (:inherit hl-line :extend t)))
-  "Face for the currently selected note background.")
+  '((t (:extend t)))
+  "Face for the currently selected note background.
+When it sets no background, `notes-list-selection-tint' provides one.")
 
 (defface notes-list-face-indicator
   '((t (:inherit font-lock-keyword-face)))
@@ -396,6 +405,22 @@ Only the first few kilobytes are read, so this is fast even for big notes."
             (push (cons key value) keywords))))
       keywords)))
 
+(defun notes-list--strip-markup (string)
+  "Remove org link brackets and emphasis markers from STRING.
+\"Using ~git~ and [[https://x.org][X]]\" becomes \"Using git and X\"."
+  (let ((string (replace-regexp-in-string
+                 "\\[\\[\\(?:[^]]*\\]\\[\\)?\\([^]]*\\)\\]\\]" "\\1" string))
+        (emphasis (concat "\\(^\\|[[:space:]('\"{-]\\)"
+                          "\\([~=*/_+]\\)"
+                          "\\([^[:space:]]\\|[^[:space:]].*?[^[:space:]]\\)"
+                          "\\2"
+                          "\\($\\|[[:space:].,:;!?'\")}-]\\)"))
+        (start 0))
+    (while (string-match emphasis string start)
+      (setq start (+ (match-end 1) (length (match-string 3 string))))
+      (setq string (replace-match "\\1\\3\\4" t nil string)))
+    string))
+
 (defun notes-list--parse-date (string)
   "Return the time of the first YYYY-MM-DD date in STRING, or nil.
 Accepts plain dates as well as org timestamps like <2024-02-26 Mon>."
@@ -438,13 +463,15 @@ CATEGORY is the note's folder, see `notes-list--category-of'."
          (keywords (notes-list--read-keywords filename))
          (tags (cdr (assoc "FILETAGS" keywords))))
     (list (cons "FILENAME" filename)
-          (cons "TITLE" (or (cdr (assoc "TITLE" keywords))
-                            (file-name-base filename)))
+          (cons "TITLE" (notes-list--strip-markup
+                         (or (cdr (assoc "TITLE" keywords))
+                             (file-name-base filename))))
           (cons "TIME-CREATION" (or (notes-list--parse-date (cdr (assoc "DATE" keywords)))
                                     modification-time))
           (cons "TIME-MODIFICATION" modification-time)
           (cons "TIME-ACCESS" (file-attribute-access-time attributes))
-          (cons "SUMMARY" (or (cdr (assoc "SUMMARY" keywords)) ""))
+          (cons "SUMMARY" (notes-list--strip-markup
+                           (or (cdr (assoc "SUMMARY" keywords)) "")))
           (cons "TAGS" (and tags (split-string tags "[ \t:]+" t)))
           (cons "ICON" (cdr (assoc "ICON" keywords)))
           (cons "CATEGORY" (notes-list--category-of filename root-directory)))))
@@ -642,6 +669,22 @@ CATEGORY is the note's folder, see `notes-list--category-of'."
          (overlay-put ov 'face 'notes-list-face-stripe)
          (overlay-put ov 'priority 1))))))
 
+(defun notes-list--selection-face ()
+  "Face for the selected note: `notes-list-face-highlight' over a tint.
+The tint blends `notes-list-selection-tint' of the indicator color
+into the default background, so it suits any theme."
+  (let ((background (color-name-to-rgb (or (face-background 'default nil t) "")))
+        (accent (color-name-to-rgb (or (face-foreground 'notes-list-face-indicator nil t) ""))))
+    (if (and background accent (> notes-list-selection-tint 0))
+        `(notes-list-face-highlight
+          (:background ,(apply #'color-rgb-to-hex
+                               (append (cl-mapcar (lambda (b a)
+                                                    (+ b (* notes-list-selection-tint (- a b))))
+                                                  background accent)
+                                       '(2)))
+           :extend t))
+      '(notes-list-face-highlight))))
+
 (defun notes-list--update-selection ()
   "Draw the selection on the note at point.
 The selection bar is drawn into the gutter cells, so text never shifts."
@@ -650,15 +693,15 @@ The selection bar is drawn into the gutter cells, so text never shifts."
     (setq notes-list--selection-overlays nil)
     (when (notes-list--note-at-point)
       (let* ((bounds (notes-list--entry-bounds))
+             (face (notes-list--selection-face))
              (ov (make-overlay (car bounds) (cdr bounds))))
-        (overlay-put ov 'face 'notes-list-face-highlight)
+        (overlay-put ov 'face face)
         (overlay-put ov 'priority 50)
         (push ov notes-list--selection-overlays)
         (dolist (pos (notes-list--slots 'bar (car bounds) (cdr bounds)))
           (let ((ov (make-overlay pos (1+ pos))))
             (overlay-put ov 'display
-                         (propertize "▌" 'face '(notes-list-face-indicator
-                                                 notes-list-face-highlight)))
+                         (propertize "▌" 'face (cons 'notes-list-face-indicator face)))
             (overlay-put ov 'priority 60)
             (push ov notes-list--selection-overlays)))))))
 
@@ -999,7 +1042,8 @@ The folder defaults to that of the selected note."
             (goto-char (point-min))
             (forward-line (min line (max 0 (1- (length notes))))))
           (dolist (window (get-buffer-window-list buffer nil t))
-            (set-window-point window (point)))
+            (set-window-point window (point))
+            (set-window-vscroll window 0 t))
           (setq notes-list--last-width (notes-list--window-width))
           (setq header-line-format
                 (notes-list--header-line (length notes) (length notes-list--notes)))
@@ -1110,6 +1154,10 @@ The folder defaults to that of the selected note."
   (setq-local cursor-type nil)
   (setq-local buffer-undo-list t)
   (setq-local revert-buffer-function (lambda (&rest _) (notes-list-reload)))
+  ;; Scroll by whole notes: pixel scrolling (`pixel-scroll-precision-mode',
+  ;; which `ultra-scroll' builds on) can leave a note cut in half at the top.
+  (setq-local minor-mode-overriding-map-alist
+              (list (cons 'pixel-scroll-precision-mode (make-sparse-keymap))))
   (add-hook 'post-command-hook #'notes-list--update-selection nil t)
   (add-hook 'window-size-change-functions #'notes-list--on-window-resize nil t)
   (add-hook 'after-save-hook #'notes-list--after-save))
